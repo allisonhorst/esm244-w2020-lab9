@@ -1,0 +1,170 @@
+---
+title: "Lecture 13 examples"
+author: "Allison Horst"
+date: "3/1/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      message = FALSE,
+                      warning = FALSE)
+library(tidyverse)
+library(here)
+library(nlstools)
+library(rsample)
+library(broom)
+library(purrr)
+```
+
+Read in mock logistic growth data:
+```{r}
+df <- read_csv(here("data", "log_growth.csv"))
+
+# Look at it:
+ggplot(data = df, aes(x = time, y = pop)) +
+  geom_point() +
+  theme_minimal() +
+  labs(x = "time (hr)", y = "population (ind)")
+
+# Look at the log transformed:
+ggplot(data = df, aes(x = time, y = log(pop))) +
+  geom_point() +
+  theme_minimal() +
+  labs(x = "time (hr)", y = "ln(population)")
+```
+
+Recall: 
+
+$P(t)=\frac{K}{1+Ae^{-kt}}$, where
+
+- $K$ is the carrying capacity
+- $A$ is $\frac{K-P_0}{P_0}$
+- $k$ is the growth rate constant
+
+### Initial estimates for *K*, *A* and *k*
+
+Estimate the growth constant during exponential phase (to get a starting-point guess for *k*): 
+```{r}
+# Get only up to 14 hours & ln transform pop
+df_exp <- df %>% 
+  filter(time < 15) %>% 
+  mutate(ln_pop = log(pop))
+  
+# Model linear to get *k* estimate:
+lm_k <- lm(ln_pop ~ time, data = df_exp)
+lm_k
+
+# Coefficient (k) ~ 0.17
+```
+
+Now we have initial estimate for *k* (0.17), and we can estimate *K* ~180 and *A* ~ 17. We need those estimates because we will use them as starting points for interative algorithms trying to converge on the parameters. If we're too far off, they may not converge or could converge on the very wrong thing.
+
+Two methods we'll try to estimate the parameters: nonlinear least squares (NLS) and Maximum Likelihood Estimation (MLE). 
+
+### Nonlinear least squares
+
+Nonlinear least squares converges on parameter estimates that minimize the the sum of squares of residuals through an iterative algorithm (we'll use Gauss-Newton, the most common). 
+
+Check out the `stats::nls()` function (`?nls`) for more information. 
+
+Now enter our model information, with a list of estimated starting parameter values:
+```{r}
+df_nls <- nls(pop ~ K/(1 + A*exp(-r*time)),
+              data = df,
+              start = list(K = 180, A = 17, r = 0.17)
+              )
+
+# Note: you can add argument `trace = TRUE` to see the different estimates at each iteration (and the left-most column reported tells you SSE)
+
+summary(df_nls)
+
+```
+
+Our model with estimated parameters is:
+$$P(t) = \frac{188.70}{1+138.86e^{-0.35t}}$$
+
+### Visualize model
+```{r}
+t_seq <- seq(from = 0, to = 35, length = 200)
+
+# Make predictions for the population at all of those times (t)
+p_predict <- predict(df_nls, newdata = t_seq)
+
+# Bind predictions to original data frame:
+df_complete <- data.frame(df, p_predict)
+
+# Plot them all together:
+ggplot(data = df_complete, aes(x = time, y = pop)) +
+  geom_point() +
+  geom_line(aes(x = time, y = p_predict)) +
+  theme_minimal()
+
+```
+
+### Find confidence intervals for parameter estimates
+
+See `?confint2` and `?confint.nls`
+```{r}
+df_ci <- confint2(df_nls)
+df_ci
+```
+
+### Bootstrap samples, visualize CI
+
+A great vignette that this code is taken from directly: [`broom` vignette on bootstrapping from `nls`](https://cran.r-project.org/web/packages/broom/vignettes/bootstrapping.html)
+
+" Bootstrapping is a popular method for providing confidence intervals and predictions that are more robust to the nature of the data.
+
+We can use the bootstraps function in the rsample package to sample bootstrap replications. First, we construct 100 bootstrap replications of the data, each of which has been randomly sampled with replacement. The resulting object is an rset, which is a dataframe with a column of rsplit objects.
+
+An rsplit object has two main components: an analysis dataset and an assessment dataset, accessible via analysis(rsplit) and assessment(rsplit) respectively. For bootstrap samples, the analysis dataset is the bootstrap sample itself, and the assessment dataset consists of all the out of bag samples."
+```{r}
+set.seed(1983)
+df_boot <- bootstraps(df, times = 1000)
+df_boot
+```
+
+```{r}
+# Use updated estimates for parameters here (from above):
+
+fit_nls_on_bootstrap <- function(split) {
+    nls(pop ~ K/(1 + A*exp(-r*time)), analysis(split), start = list(K = 180, A = 138, r = 0.35))
+}
+
+# Get splits (each bootstrap sample), fit nls to each one, get tidy coefficient data
+boot_models <- df_boot %>% 
+    mutate(model = map(splits, fit_nls_on_bootstrap),
+           coef_info = map(model, tidy))
+
+# Unnest the parameter estimates for each bootstrapped sample
+boot_coefs <- boot_models %>% 
+    unnest(coef_info)
+
+boot_coefs
+
+# Set a significance level
+alpha <- .05
+
+# Group by each parameter, find 2.5th and 97.5th percentile: 
+boot_coefs %>% 
+    group_by(term) %>%
+    summarize(low = quantile(estimate, alpha / 2),
+              high = quantile(estimate, 1 - alpha / 2))
+
+# See that these estimates are a bit different than from our single sample! 
+```
+
+```{r}
+boot_aug <- boot_models %>% 
+    mutate(augmented = map(model, augment)) %>% 
+    unnest(augmented)
+
+boot_aug
+
+ggplot(boot_aug, aes(time, pop)) +
+  geom_line(aes(y = .fitted, group = id), alpha=0.05, color = "purple") +
+  geom_point(data = df, aes(x = time, y = pop)) +
+  theme_minimal()
+```
+

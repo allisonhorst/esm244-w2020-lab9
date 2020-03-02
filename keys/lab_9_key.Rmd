@@ -1,5 +1,5 @@
 ---
-title: "Lab 9: Bootstrapping and nonlinear least squares"
+title: "Lab 9: Bootstrapping, nonlinear least squares, and customizing tables with gt"
 author: "Allison Horst"
 date: "3/1/2020"
 output: html_document
@@ -13,7 +13,83 @@ knitr::opts_chunk$set(echo = TRUE,
 library(tidyverse)
 library(here)
 library(boot)
+library(gt)
+
+# Note: get gt package from GitHub
+# library(devtools)
+# remotes::install_github("rstudio/gt")
 ```
 
 Here: add bootstrapping for CIs, etc. with visualization of resampling. 
-Also add some cool data viz stuff? Like a cool map or something? 
+Also at a gt table. 
+
+
+
+### First: an example of a table with `gt`
+
+We'll use the `LifeCycleSavings` built-in dataset. See `?LifeCycleSavings` for more information. 
+
+Simplify it a bit to get the 10 countries with the lowest savings ratio:
+```{r}
+disp_income <- LifeCycleSavings %>% 
+  rownames_to_column() %>% 
+  arrange(dpi) %>% 
+  head(5) %>% 
+  mutate(ddpi = ddpi / 100,
+         pop15 = pop15 / 100,
+         pop75 = pop75 / 100) # To make it a decimal (we'll convert to a percentage in the table - better practice)
+```
+
+`gt` is an awesome package that makes customizing tables relatively painless. See a bunch of options here: 
+https://gt.rstudio.com/reference/tab_options.html
+
+We'll make a custom table using the `gt` package with the following goals: 
+
+- Percent variables (ddpi, pop15 and pop75) should be in percent format
+- Per capita disposable income (dpi) should be as dollars
+- Color of dpi cells should change based on value
+
+Build this one level at a time to see changes: 
+```{r}
+disp_income %>% 
+  gt() %>% 
+  tab_header(
+    title = "Life cycle savings", # Add a title
+    subtitle = "5 countries with lowest per capita disposable income" # And a subtitle
+  ) %>% 
+  fmt_currency( # Reformat to currency notation...
+    columns = vars(dpi), # The values for the 'Height' variable
+    decimals = 2 # Keeping 3 decimal places
+  ) %>% 
+  fmt_percent(
+    columns = vars(pop15, pop75, ddpi),
+    decimals = 1
+  ) %>% 
+  fmt_number(
+    columns = vars(sr),
+    decimals = 1
+  ) %>% 
+  tab_options(
+    table.width = pct(80)
+  ) %>% 
+  tab_footnote(
+    footnote = "Data averaged from 1970 - 1980",
+    location = cells_title()
+  ) %>% 
+  data_color( # Update cell colors...
+    columns = vars(dpi), # ...for mean_len column
+    colors = scales::col_numeric(
+      palette = c(
+        "orange", "red", "purple"), # Overboard colors! 
+      domain = c(120,190) # Scale endpoints (outside will be gray)
+  )
+  ) %>% 
+  cols_label(
+    sr = "Savings ratio",
+    pop15 = "Pop < 15yr",
+    pop75 = "Pop < 75yr",
+    dpi = "Disposable $ per capita",
+    ddpi = "Disposable percent"
+  )
+```
+

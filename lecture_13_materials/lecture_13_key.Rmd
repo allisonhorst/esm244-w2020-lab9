@@ -72,7 +72,8 @@ Now enter our model information, with a list of estimated starting parameter val
 ```{r}
 df_nls <- nls(pop ~ K/(1 + A*exp(-r*time)),
               data = df,
-              start = list(K = 180, A = 17, r = 0.17)
+              start = list(K = 180, A = 17, r = 0.17),
+              trace = TRUE
               )
 
 # Note: you can add argument `trace = TRUE` to see the different estimates at each iteration (and the left-most column reported tells you SSE)

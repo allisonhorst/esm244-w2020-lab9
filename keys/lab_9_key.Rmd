@@ -14,18 +14,16 @@ library(tidyverse)
 library(here)
 library(boot)
 library(gt)
+library(patchwork)
+library(broom)
+library(nlstools)
 
 # Note: get gt package from GitHub
 # library(devtools)
 # remotes::install_github("rstudio/gt")
 ```
 
-Here: add bootstrapping for CIs, etc. with visualization of resampling. 
-Also at a gt table. 
-
-
-
-### First: an example of a table with `gt`
+### Fun, beautiful tables with `gt`
 
 We'll use the `LifeCycleSavings` built-in dataset. See `?LifeCycleSavings` for more information. 
 
@@ -93,3 +91,201 @@ disp_income %>%
   )
 ```
 
+### Bootstrapping!
+
+Bootstrapping uses **sampling with replacement** to find a sampling distribution that is based on more than a single sample. Let's bootstrap a 95% confidence interval for the mean salinity of river discharge in Pamlico Sound, NC (see `?salinity` for information on the dataset from the `boot`) package. 
+
+From dataset documentation: "Biweekly averages of the water salinity and river discharge in Pamlico Sound, North Carolina were recorded between the years 1972 and 1977. The data in this set consists only of those measurements in March, April and May."
+
+
+Look & explore `salinity` dataset. 
+```{r}
+# View(salinity)
+
+# Get some summary statistics from the single salinity sample:
+hist(salinity$sal)
+mean(salinity$sal)
+t.test(salinity$sal) # Get 95% CI for t-distribution
+
+```
+
+ALWAYS ask questions: 
+
+- Do the data look normally distributed? 
+- Do we have a large enough n to depend on Central Limit Theorem? 
+- What assumptions do we make if we find the CI based on a single sample using the t-distribution here? 
+
+Bootstrap the mean salinity: 
+```{r}
+
+# First, create a function that will calculate the median of each bootstrapped sample
+mean_fun <- function (x,i) {mean(x[i])}
+
+# Get just the vector of plumage index
+sal_nc <- salinity$sal
+
+# Bootstrap (100 samples with replacement)
+salboot_100 <- boot(sal_nc, 
+                    statistic = mean_fun,
+                    R = 100)
+
+# Bootstrap (10000 samples with replacement)
+salboot_10k <- boot(sal_nc, 
+                 statistic = mean_fun, 
+                 R = 10000)
+
+# Check out the output from the bootstrap:
+salboot_100
+salboot_10k
+
+# Question: do we all get the same thing? What would we have to do in order to all get the same thing? And would we *want* that? 
+
+salboot_100$t0 # The original sample mean
+salboot_100$t # These are all the means for each 100 samples
+
+# Make vectors of bootstrap sample means a data frame (so ggplot will deal with it). 
+salboot_100_df <- data.frame(bs_mean = salboot_100$t)
+salboot_10k_df <- data.frame(bs_mean = salboot_10k$t)
+
+# ggplot the bootstrap sample medians: 
+
+# The histogram of the original sample:
+p1 <- ggplot(data = salinity, aes(x = sal)) +
+  geom_histogram()
+
+# Histogram of 100 bootstrap sample means:
+p2 <- ggplot(data = salboot_100_df, aes(x = bs_mean)) +
+  geom_histogram()
+
+# Histogram of 10k bootstrap sample means:
+p3 <- ggplot(data = salboot_10k_df, aes(x = bs_mean)) +
+  geom_histogram()
+
+# Aside: PATCHWORK IS AWESOME!!! 
+p1 + p2 + p3
+```
+
+Seriously, check out how awesome `patchwork` by Thomas Lin Pedersen is: https://patchwork.data-imaginist.com/articles/guides/assembly.html...a game changer for piecing together compound figures! 
+
+It also knows PEMDAS
+```{r}
+p1 + p2 / p3
+```
+
+```{r}
+(p1 + p2) / p3
+```
+
+## OK back to bootstrapping...
+
+So now we have a sampling distribution based on means calculated from a large number of bootstrap samples, and we can use *this* sampling distribution (instead of one based on assumptions for our single sample) to find the confidence interval. 
+
+```{r}
+boot.ci(salboot_10k, conf = 0.95)
+```
+
+We'll chat a bit about what each of these CIs means, and you can read more here: https://besjournals.onlinelibrary.wiley.com/doi/pdf/10.1111/1365-2656.12382
+
+A reminder on what a confidence interval means: For a 95% confidence interval, that means we expect that 95 of 100 calculated confidence intervals will contain the actual population parameter. 
+
+What it does **not** mean: There's a 95% chance that your confidence interval contains the true population parameter (it either does or it doesn't)...
+
+And you can bootstrap all kinds of other things too (medians, variances, correlations, regression coefficients, etc.), but there are limitations.
+
+### Nonlinear least squares
+
+Read in some mock logistic growth data:
+```{r}
+df <- read_csv(here("data", "log_growth.csv"))
+
+# Look at it:
+ggplot(data = df, aes(x = time, y = pop)) +
+  geom_point() +
+  theme_minimal() +
+  labs(x = "time (hr)", y = "population (ind)")
+
+# Look at the log transformed:
+ggplot(data = df, aes(x = time, y = log(pop))) +
+  geom_point() +
+  theme_minimal() +
+  labs(x = "time (hr)", y = "ln(population)")
+```
+
+Recall: 
+
+$P(t)=\frac{K}{1+Ae^{-kt}}$, where
+
+- $K$ is the carrying capacity
+- $A$ is $\frac{K-P_0}{P_0}$
+- $k$ is the growth rate constant
+
+### Initial estimates for *K*, *A* and *k*
+
+Estimate the growth constant during exponential phase (to get a starting-point guess for *k*): 
+```{r}
+# Get only up to 14 hours & ln transform pop
+df_exp <- df %>% 
+  filter(time < 15) %>% 
+  mutate(ln_pop = log(pop))
+  
+# Model linear to get *k* estimate:
+lm_k <- lm(ln_pop ~ time, data = df_exp)
+lm_k
+
+# Coefficient (k) ~ 0.17
+```
+
+Now we have initial estimate for *k* (0.17), and we can estimate *K* ~180 and *A* ~ 17. We need those estimates because we will use them as starting points for interative algorithms trying to converge on the parameters. If we're too far off, they may not converge or could converge on the very wrong thing.
+
+Two methods we'll try to estimate the parameters: nonlinear least squares (NLS) and Maximum Likelihood Estimation (MLE). 
+
+### Nonlinear least squares
+
+Nonlinear least squares converges on parameter estimates that minimize the the sum of squares of residuals through an iterative algorithm (we'll use Gauss-Newton, the most common). 
+
+Check out the `stats::nls()` function (`?nls`) for more information. 
+
+Now enter our model information, with a list of estimated starting parameter values:
+```{r}
+df_nls <- nls(pop ~ K/(1 + A*exp(-r*time)),
+              data = df,
+              start = list(K = 180, A = 17, r = 0.17),
+              trace = TRUE
+              )
+
+# Note: you can add argument `trace = TRUE` to see the different estimates at each iteration (and the left-most column reported tells you SSE)
+
+summary(df_nls)
+
+```
+
+Our model with estimated parameters is:
+$$P(t) = \frac{188.70}{1+138.86e^{-0.35t}}$$
+
+### Visualize model
+```{r}
+t_seq <- seq(from = 0, to = 35, length = 200)
+
+# Make predictions for the population at all of those times (t)
+p_predict <- predict(df_nls, newdata = t_seq)
+
+# Bind predictions to original data frame:
+df_complete <- data.frame(df, p_predict)
+
+# Plot them all together:
+ggplot(data = df_complete, aes(x = time, y = pop)) +
+  geom_point() +
+  geom_line(aes(x = time, y = p_predict)) +
+  theme_minimal()
+
+```
+
+### Find confidence intervals for parameter estimates
+
+See `?confint2` and `?confint.nls`
+```{r}
+df_ci <- confint2(df_nls)
+df_ci
+```
+
+### END LAB 9

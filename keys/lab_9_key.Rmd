@@ -121,15 +121,15 @@ Bootstrap the mean salinity:
 # First, create a function that will calculate the median of each bootstrapped sample
 mean_fun <- function (x,i) {mean(x[i])}
 
-# Get just the vector of plumage index
+# Then, get just the vector of salinity (salinity$sal)
 sal_nc <- salinity$sal
 
-# Bootstrap (100 samples with replacement)
+# Now, create 100 bootstrap samples by resampling from the salinity vector (sal_nc), using the function you created (mean_fun) to calculate the mean of each:
 salboot_100 <- boot(sal_nc, 
                     statistic = mean_fun,
                     R = 100)
 
-# Bootstrap (10000 samples with replacement)
+# OK, then for comparison, let's also create 10000 bootstrap samples with replacement
 salboot_10k <- boot(sal_nc, 
                  statistic = mean_fun, 
                  R = 10000)
@@ -138,8 +138,9 @@ salboot_10k <- boot(sal_nc,
 salboot_100
 salboot_10k
 
-# Question: do we all get the same thing? What would we have to do in order to all get the same thing? And would we *want* that? 
+# Question: do we all get the same thing? What would we have to do in order to all get the same thing (hint: set.seed())? And would we *want* that? 
 
+# Use $t0 to see the original sample mean, and $t to see the means for each of the bootstrap samples:
 salboot_100$t0 # The original sample mean
 salboot_100$t # These are all the means for each 100 samples
 

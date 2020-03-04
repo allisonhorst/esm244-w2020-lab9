@@ -1,1 +1,14 @@
-# esm244-w2020-lab9
+# ESM 244 Lab 9
+## Fun tables with `gt`, bootstrapping confidence intervals, nonlinear least squares, compound figures with `patchwork`
+
+### Packages required: 
+
+- `tidyverse`
+- `here`
+- `janitor`
+- `gt`
+- `boot`
+- `patchwork`
+- `broom`
+- `nlstools`
+

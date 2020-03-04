@@ -257,10 +257,16 @@ df_nls <- nls(pop ~ K/(1 + A*exp(-r*time)),
 
 summary(df_nls)
 
+# Use broom:: functions to get model outputs in tidier format: 
+model_out <- broom::tidy(df_nls)
+
+# Want to just get one of these? 
+A_est <- tidy(df_nls)$estimate[1]
+
 ```
 
 Our model with estimated parameters is:
-$$P(t) = \frac{188.70}{1+138.86e^{-0.35t}}$$
+$$P(t) = \frac{188.7}{1+138.86e^{-0.35t}}$$
 
 ### Visualize model
 ```{r}

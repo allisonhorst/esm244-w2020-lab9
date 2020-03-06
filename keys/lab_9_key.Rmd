@@ -271,10 +271,9 @@ $$P(t) = \frac{188.7}{1+138.86e^{-0.35t}}$$
 
 ### Visualize model
 ```{r}
-t_seq <- seq(from = 0, to = 35, length = 200)
 
-# Make predictions for the population at all of those times (t)
-p_predict <- predict(df_nls, newdata = t_seq)
+# Make predictions for the population at all of those times (time) in the original df: 
+p_predict <- predict(df_nls)
 
 # Bind predictions to original data frame:
 df_complete <- data.frame(df, p_predict)
